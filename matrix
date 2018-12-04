@@ -1,0 +1,341 @@
+##################################################################
+## Program name: matrix
+## Class name: CS344
+## Author: Ben Fridkis
+## Date: 9/18/2018
+## Description:   Program to accomplish the following:
+##
+##			    A. Provide the dimensions of a 2D matrix.
+##				B. Transpose a 2D matrix across it's diagonal axis.
+##				C. Provide the mean for each column of a 2D matrix.
+##				D. Add 2 2D matrices.
+##				E. Multiply 2 2D matrices.
+##
+## Usage:	
+##				A. matrix dims [MATRIX]
+##				B. matrix transpose [MATRIX]
+##				C. matrix mean [MATRIX]
+##				D. matrix add MATRIX_LEFT MATRIX_RIGHT
+##				E. matrix multiple MATRIX_LEFT MATRIX_RIGHT
+###################################################################
+
+#!/bin/bash
+
+# dims: read matrix file and echo dimensions (ROW# x COL#)
+
+#Function to display/output the dimensions of an input matrix, which is specified
+#as a file name argument or via stdin. Output is in form "M N", where M is 
+#the number of rows and N is the number of columns of the input matrix.
+dims () {
+	
+	local rc=0	#row count
+	local cc=0	#column count
+
+	while read rv; do		#rv = row value
+		#Check to make sure matrix consists of only integers and whitespace
+		if [[ "$rv" =~ ^(-?[0-9]+[[:space:]]?)+$ ]]; then
+			rc=$((rc + 1))
+			#Determine column count
+			(( rc == 1 )) && cc=$(wc -w <<< "$rv")	#Only need to update cc one time
+		else 
+ 			echo -e "\n$FUNCNAME: input: Invalid matrix file.\n"\
+				 "\t     Must contain integers separated by single tabs on every line.\n"\
+				 "\t     Hint: Check (and remove) any trailing blank lines.\n" >&2
+			exit 1
+		fi
+
+	done < "${1:-/dev/stdin}"
+
+	printf "%s %s\n" "$rc" "$cc"
+}
+
+#Function to display/output a "transposed" matrix, given an input matrix that 
+#is specified as a file name argument or via stdin. The transposed output
+#reflects the elements of the matrix along the main diagonal (i.e. rows
+#become columns, such that the values of row 1 become the values of column 1,
+#the values of row 2 become the values of column 2, etc.).
+transpose () {
+
+	#Remove all possible tmp files and exit if SIGINT,
+	#--SIGTERM, or SIGHUP is received
+	trap "rm -f trans.tmp.*; exit 0" SIGINT SIGTERM SIGHUP 
+
+	touch "trans.tmp.0.$$"	#Create initial tmp file to store transposed data
+	local rc=0				#row count
+
+	while read rv; do		#rv = row value
+		#Check to make sure matrix consists of only integers and whitespace
+		if [[ "$rv" =~ ^(-?[0-9]+[[:space:]]?)+$ ]]; then
+			#Increment row count
+			((++rc))
+			#Convert each row of input into a column, stored in tmp file
+			echo -e "$rv" | tr '[\t\040]' '\n' > "trans.tmp.col.$$"
+
+			#By alternating temp files for each successive paste operation,
+			#--a "running total" for the transposed matrix is developed after
+			#--each successive paste. Each successive file contains one additional
+			#--row that has been transposed as a column.
+			paste  "trans.tmp.$((rc-1)).$$" "trans.tmp.col.$$" > "trans.tmp.${rc}.$$"
+			rm -f "trans.tmp.$((rc-1)).$$"		#Remove previous tmp file
+		else 
+ 			echo -e "\n$FUNCNAME: input: Invalid matrix file.\n"\
+				 "\t          Must contain integers separated by single tabs on every line.\n"\
+				 "\t          Hint: Check (and remove) any trailing blank lines.\n" >&2
+			exit 1
+		fi	
+
+	done < "${1:-/dev/stdin}"
+	#Remove leading tab and display
+	cut -c 1 --complement "trans.tmp.${rc}.$$" | cat
+	#Remove remaining temp files
+	rm -f "trans.tmp.col.$$" "trans.tmp.${rc}.$$"
+}
+
+#Function to display/output the mean of each column of a matrix of integers,
+#specified as a file name argument or via stdin.
+mean () {
+
+	#Remove all possible tmp files and exit if SIGINT,
+	#--SIGTERM, or SIGHUP is received
+	trap "rm -f mean.tmp.*; exit 0" SIGINT SIGTERM SIGHUP 
+
+	#Move stdin to temp file if existing matrix file
+	#--is not specified via command line
+	if [[ "$#" == "0" ]]; then
+		cat > "mean.tmp.stdin.$$" 
+	fi
+
+	read rv < "${1:-mean.tmp.stdin.$$}"	#rv = row value
+	#Check to make sure matrix consists of only integers and whitespace
+	if [[ "$rv" =~ ^(-?[0-9]+[[:space:]]?)+$ ]]; then
+		#Determine column count
+		local cc=$(wc -w <<< "$rv")	#Only need to update cc one time
+	else 
+		echo -e "\n$FUNCNAME: input: Invalid matrix file.\n"\
+			 "\t     Must contain integers seperated by single tabs on every line.\n"\
+			 "\t     Hint: Check (and remove) any trailing blank lines.\n" >&2
+		exit 1
+	fi
+
+	echo -n > "mean.tmp.results.$$"		#Create empty file
+	for (( i=1; i<=cc; i++ )); do
+		#Get each column of input, determine average, and write result to tmp file
+		cut -f $i "${1:-mean.tmp.stdin.$$}" > "mean.tmp.col.$$"
+		local sum=0
+		local rc=0
+		while read rv; do
+			sum=$((sum+=rv))
+			((rc++))
+		done < "mean.tmp.col.$$"
+		local mean=$((($sum + ($rc/2)* (($sum>0)*2-1)) / $rc))	#Use traditional rounding
+		echo -ne "\t${mean}" >> "mean.tmp.results.$$"
+	done
+
+	#Remove leading tab and display
+	cut -c 1 --complement "mean.tmp.results.$$" | cat
+	#Remove temp files
+	rm -f "mean.tmp.col.$$" "mean.tmp.results.$$" "mean.tmp.stdin.$$"
+}
+
+#Adds two input matrices and displays/outputs result. Input matrices must
+#be specified as two file name arguments. (Input matrices must be of same
+#dimensions.)
+add () {
+
+	#Remove all possible tmp files and exit if SIGINT,
+	#--SIGTERM, or SIGHUP is received
+	trap "rm -f add.tmp.*; exit 0" SIGINT SIGTERM SIGHUP 
+
+	#Check for unequal dimensions between input matrices
+	local d1=$(dims $1 | cat)
+	local d2=$(dims $2 | cat)
+	if [[ "$d1" != "$d2" ]]; then
+		echo -e "\n$FUNCNAME: input: Incompatible matrix dimensions.\n"\
+			 "\t    Matrix dimensions must be equal.\n" >&2
+		exit 1
+	fi
+
+	echo -n > "add.tmp.results.$$"		#Create empty file
+	while read m1rv <&3 && read m2rv <&4; do			#read matrix 1 and 2 row values
+		local cc=1										#To track column/value number
+		echo -n "$m2rv" > "add.tmp.m2row.$$"
+		for m1_value in $m1rv; do
+			m2_value=$(cut -f $cc "add.tmp.m2row.$$") 
+			local sum=$((m1_value+m2_value))			#Sum row values
+			echo -ne "\t${sum}" >> "add.tmp.results.$$" #Print to file
+			((cc++))
+		done
+		echo >> "add.tmp.results.$$"					#Add new line after each row
+	done 3<"$1" 4<"$2"
+
+	#Remove leading tab and display
+	cut -c 1 --complement "add.tmp.results.$$" | cat
+	#Remove temp file
+	rm -f "add.tmp.results.$$" add.tmp.m2row.*
+			
+}
+
+#Multiplies two matrices and displays/outputs results. Input matrices must
+#be specified as two file name arguments, where the column count of matrix 1
+#(provided via the first file name argument) must be equal to the row
+#count of matrix 2 (provided via the second file name argument).
+multiply () {
+
+	#Remove all possible tmp files and exit if SIGINT,
+	#--SIGTERM, or SIGHUP is received
+	trap "rm -f multiply.tmp.*; exit 0" SIGINT SIGTERM SIGHUP 
+
+	local cc1=$(dims $1 | cut -f 2 -d " " | cat)	#Matrix 1 column count
+	local rc2=$(dims $2 | cut -f 1 -d " " | cat)	#Matrix 2 row count
+	if [[ "$cc1" != "$rc2" ]]; then
+		echo -e "\n$FUNCNAME: input: Incompatible matrix dimensions.\n"\
+			"\t        Matrix 1 width (column count) must equal Matrix 2"\
+					  "height (row count).\n" >&2
+		exit 1	
+	fi
+	
+	echo -n > "multiply.tmp.results.$$"						#Create empty file
+	local cc2=$(dims $2 | cut -f 2 -d " " | cat)			#Matrix 2 column count
+
+	while read m1rv <&3 ; do								#Read matrix 1 row values
+		for (( i=1;i<=cc2;i++ )); do
+			local sum=0
+			local cn=1										#Current (M1) item's column number
+			cut -f "$i" "$2" > "multiply.tmp.m2col.$$"
+			for m1_value in $m1rv; do
+				m2_value=$(head -n "$cn" "multiply.tmp.m2col.$$" | tail -n 1) 
+				sum=$((m1_value*m2_value + sum))			#Multiply elements and add to sum
+				((cn++))
+			done
+			echo -ne "\t${sum}" >> "multiply.tmp.results.$$" #Print result to file
+		done	
+		echo >> "multiply.tmp.results.$$"					#Add new line after each row
+	done 3<"$1" 
+
+	#Remove leading tab and display
+	cut -c 1 --complement "multiply.tmp.results.$$" | cat
+	#Remove temp files
+	rm -f "multiply.tmp.results.$$" "multiply.tmp.m2col.$$" 
+}
+
+#if parameter 2 (command line arg 2) is provided, check that it specifies
+#--a readable file. If it does not, print error message and exit with code 1.
+if [[ -n "$2" ]] ; then
+	if [[ ! -f "$2" ]] ; then
+		echo -e "\n$(basename $0): file: File Not Found.\n"\
+			 "\t      Please specify a valid file for [ARGUMENT1]:\n\n"\
+			 "       usage: matrix OPERATION [ARGUMENT1] [ARGUMENT2]\n" >&2
+		exit 1
+	fi
+	if [[ ! -r "$2" ]] ; then
+		echo -e "\n$(basename $0): file: File Not Readable.\n"\
+			 "\t      Please specify a readable file for [ARGUMENT1]:\n\n"\
+			 "       usage: matrix OPERATION [ARGUMENT1] [ARGUMENT2]\n" >&2
+		exit 1
+	fi		
+fi		
+
+case $1 in
+	dims|DIMS|Dims)	
+					#If user runs dims, check for proper argument count then run
+					if (( $# > 2 )); then
+						echo -e "\n$1: arguments: Invalid argument count.\n\n"\
+							 "     usage: matrix dims [ARUGMENT]\n"\
+							 "           (matrix dims accepts only one argument)\n" >&2
+						exit 1
+					else
+						dims $2
+						exit
+					fi
+					;;
+	transpose|TRANSPOSE|Transpose)
+					#If user runs transpose, check for proper argument count then run
+					if (( $# > 2 )); then
+						echo -e "\n$1: arguments: Invalid argument count.\n\n"\
+							 "     usage: matrix transpose [ARUGMENT]\n"\
+							 "           (matrix transpose accepts only one argument)\n" >&2
+						exit 1
+					else
+						transpose $2
+						exit
+					fi
+					;;
+	mean|MEAN\Mean)
+					#If user runs mean, check for proper argument count then run
+					if (( $# > 2 )); then
+						echo -e "\n$1: arguments: Invalid argument count.\n\n"\
+							 "     usage: matrix mean [ARUGMENT]\n"\
+							 "           (matrix mean accepts only one argument)\n" >&2
+						exit 1
+					else
+						mean $2
+						exit
+					fi
+					;;
+	add|ADD\Add)
+					#If user runs add, check for proper argument
+					if (( $# != 3 )); then
+						echo -e "\n$1: arguments: Invalid argument count.\n\n"\
+							 "     usage: matrix add ARUGMENT1 ARGUMENT2\n"\
+							 "           (matrix add requires exactly 2 arguments)\n" >&2
+						exit 1
+					fi
+					#Check that $3 is a readable file
+					#--If it is not, print error message and exit with code 1
+					if [[ ( ! -f "$3" ) ]] ; then
+						echo -e "\n$(basename $0): file: File Not Found.\n"\
+							 "\t      Please specify a valid file for ARGUMENT2:\n\n"\
+							 "       usage: matrix add FILENAME1 FILENAME2\n" >&2
+							exit 1
+					fi		
+					if [[ ( ! -r "$3" ) ]] ; then
+						echo -e "\n$(basename $0): file: File Not Readable.\n"\
+							 "\t      Please specify a readable file for ARGUMENT2:\n\n"\
+							 "       usage: matrix add FILENAME1 FILENAME2\n" >&2
+							exit 1
+					fi		
+					add $2 $3
+					exit
+					;;
+	multiply|MULTIPLY|Multiply)
+					#If user runs multiply, check for proper argument
+					if (( $# != 3 )); then
+						echo -e "\n$1: arguments: Invalid argument count.\n\n"\
+							 "     usage: matrix multiply ARUGMENT1 ARGUMENT2\n"\
+							 "           (matrix multiply requires exactly 2 arguments)\n" >&2
+						exit 1
+					fi
+					#Check that $3 is a readable file
+					#--If it is not, print error message and exit with code 1
+					if [[ ( ! -f "$3" ) ]] ; then
+						echo -e "\n$(basename $0): file: File Not Found.\n"\
+							 "\t      Please specify a valid file for ARGUMENT2:\n\n"\
+							 "       usage: matrix multiply FILENAME1 ARGUMENT2\n" >&2
+							exit 1
+					fi		
+					if [[ ( ! -r "$3" ) ]] ; then
+						echo -e "\n$(basename $0): file: File Not Readable.\n"\
+							 "\t      Please specify a readable file for ARGUMENT2:\n\n"\
+							 "       usage: matrix multiply FILENAME1 ARGUMENT2\n" >&2
+							exit 1
+					fi		
+					multiply $2 $3
+					exit 
+					;;
+	*)
+					#If user specifies an invalid option (i.e. bad command), print error
+					#--message and exit
+					echo -e "\n$(basename $0): command: Invalid command.\n"\
+						 "      usage: matrix dims|transpose|mean|add|multiply "\
+						 "[FILENAME1][FILENAME2]\n"\
+						 "            * Only [FILNAME1] may be passed to dims|transpose|mean,"\
+						              "which is optional.\n"\
+						 "            * Both FILENAME1 and FILENAME 2 must be passed to"\
+						               "add|multiply." >&2
+						exit 1
+esac
+
+#  Works Cited:
+#  1. https://stackoverflow.com/questions/6980090/how-to-read-from-a-file-or-stdin-in-bash 
+#  2. https://unix.stackexchange.com/questions/82541/loop-through-the-lines-of-two-files-in-parallel
+#  3. Shotts, William E. Jr. The Linux Command Line. 2nd Internet Edition. LinuxCommand.org.
